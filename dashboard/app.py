@@ -276,4 +276,41 @@ def live_view() -> None:
         st.info("No fraud alerts yet.")
 
     st.divider()
+
+    # ---------------------------------------------------------------- charts
+    chart_left, chart_right = st.columns(2)
+
+    with chart_left:
+        st.subheader("Confidence Scores")
+
+        if alerts:
+            threshold = float(metrics.get("chosen_threshold", 0.5)) if metrics else 0.5
+            edges, labels = confidence_bins(threshold)
+            st.caption(
+                f"How decisive each alert was. Bins start at the {threshold:.4f} "
+                "decision threshold — no alert can score below it."
+            )
+
+            width = edges[1] - edges[0]
+            counts = [0] * len(labels)
+            for c in (r["confidence"] for r in alerts):
+                # Clamped both ends so the closed final bin catches 1.0 and no
+                # row is ever silently dropped.
+                i = min(int((c - edges[0]) / width), len(labels) - 1)
+                counts[max(0, i)] += 1
+
+            fig_conf = go.Figure(go.Bar(
+                x=labels, y=counts,
+                marker=dict(color=SERIES_BLUE, line=dict(width=0)),
+                text=[str(c) if c else "" for c in counts],
+                textposition="outside",
+                textfont=dict(color=INK_MUTED, size=11),
+                hovertemplate="Confidence %{x}<br>%{y} alerts<extra></extra>",
+            ))
+            style_axes(fig_conf, "Confidence band", "Fraud alerts")
+            st.plotly_chart(fig_conf, width="stretch")
+        else:
+            st.caption("How decisive each alert was.")
+            st.info("No fraud alerts to chart yet.")
+
 live_view()
