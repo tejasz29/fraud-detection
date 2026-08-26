@@ -153,3 +153,18 @@ class ResultStore:
 
     def __exit__(self, *_exc) -> None:
         self.close()
+
+
+# ------------------------------------------------------------------- reading
+def _connect_ro(db_path: str | Path) -> sqlite3.Connection | None:
+    """Open the DB read-only, or return None if it does not exist yet.
+
+    Read-only guarantees the dashboard can never modify or lock the stream's
+    data, no matter what a query does.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    return conn
