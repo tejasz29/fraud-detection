@@ -1,12 +1,13 @@
 """Kafka consumer that scores transactions in real time using FraudModel.
 
 Reads transactions from a Kafka topic, scores each one with the trained
-XGBoost model, and logs fraud alerts.  Results are optionally persisted to
-a JSON-lines file for downstream analysis.
+XGBoost model, logs fraud alerts, and persists every result to SQLite
+(``fraud_results.db``) for the dashboard to read.
 
 Usage:
     python -m consumer
     python -m consumer --topic transactions --model consumer/model.pkl
+    python -m consumer --db fraud_results.db --output results.jsonl
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from kafka.errors import KafkaTimeoutError
 # Allow `python -m consumer` to import the sibling model module.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from model import FraudModel  # noqa: E402
+from storage import DEFAULT_DB_PATH, ResultStore, utc_now_iso  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +46,11 @@ class FraudConsumer:
     model_path: str = DEFAULT_MODEL_PATH
     explainer_path: str = DEFAULT_EXPLAINER_PATH
     group_id: str = DEFAULT_GROUP_ID
+    db_path: str | None = DEFAULT_DB_PATH
     output_path: str | None = None
     _consumer: KafkaConsumer | None = field(default=None, repr=False)
     _model: FraudModel | None = field(default=None, repr=False)
+    _store: ResultStore | None = field(default=None, repr=False)
     _output_file: object | None = field(default=None, repr=False)
     _running: bool = field(default=True, repr=False)
     _stats: dict = field(default_factory=lambda: {
