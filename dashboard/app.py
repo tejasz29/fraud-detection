@@ -95,6 +95,31 @@ def get_model_metrics() -> dict:
         return {}
 
 
+# --------------------------------------------------------------------- chrome
+def style_axes(fig: go.Figure, x_title: str, y_title: str) -> go.Figure:
+    """Recessive grid and muted axis ink, so the data carries the emphasis."""
+    fig.update_layout(
+        height=320,
+        margin=dict(l=0, r=0, t=10, b=0),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family='system-ui, -apple-system, "Segoe UI", sans-serif'),
+        showlegend=False,   # single series — the title names it
+        bargap=0.08,
+    )
+    fig.update_xaxes(
+        title=dict(text=x_title, font=dict(color=INK_MUTED, size=12)),
+        showgrid=False, zeroline=False,
+        tickfont=dict(color=INK_MUTED, size=11), linecolor=GRIDLINE,
+    )
+    fig.update_yaxes(
+        title=dict(text=y_title, font=dict(color=INK_MUTED, size=12)),
+        gridcolor=GRIDLINE, griddash="dot", zeroline=False,
+        tickfont=dict(color=INK_MUTED, size=11),
+    )
+    return fig
+
+
 def shap_summary(explanation: list) -> str:
     """Compact reason string for a table cell, e.g. ``V14 ↑ · V3 ↓ · V10 ↑``."""
     if not explanation:
