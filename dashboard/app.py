@@ -95,6 +95,17 @@ def get_model_metrics() -> dict:
         return {}
 
 
+def shap_summary(explanation: list) -> str:
+    """Compact reason string for a table cell, e.g. ``V14 ↑ · V3 ↓ · V10 ↑``."""
+    if not explanation:
+        return "—"
+    parts = []
+    for f in explanation[:3]:
+        arrow = "↑" if f.get("direction") == "increases_fraud" else "↓"
+        parts.append(f"{f.get('feature', '?')} {arrow}")
+    return "  ·  ".join(parts)
+
+
 # ------------------------------------------------------------------ sidebar
 st.sidebar.markdown("### Settings")
 st.sidebar.checkbox(
@@ -144,6 +155,38 @@ def live_view() -> None:
         delta=f"within {LATENCY_BUDGET_MS} ms budget" if within_budget else "over budget",
         delta_color="normal" if within_budget else "inverse",
     )
+
+    st.divider()
+
+    # ------------------------------------------------------- live transaction feed
+    st.subheader("Live Transaction Feed")
+
+    feed = get_recent(FEED_ROWS, fraud_only=not st.session_state.show_all_feed)
+    if feed:
+        feed_df = pd.DataFrame([{
+            # Status ships as text, never colour alone.
+            "Status": "FRAUD" if r["is_fraud"] else "OK",
+            "Transaction": r["transaction_id"],
+            "Amount": r["amount"],
+            "Fraud Prob.": r["fraud_probability"],
+            "Confidence": r["confidence"],
+            "Latency (ms)": r["scoring_ms"],
+            "Reasons": shap_summary(r["shap_explanation"]),
+            "Scored At (UTC)": r["timestamp"][11:19],
+        } for r in feed])
+
+        st.dataframe(
+            feed_df, width="stretch", hide_index=True, height=320,
+            column_config={
+                "Amount": st.column_config.NumberColumn(format="$%.2f"),
+                "Fraud Prob.": st.column_config.NumberColumn(format="%.4f"),
+                "Confidence": st.column_config.NumberColumn(format="%.4f"),
+                "Latency (ms)": st.column_config.NumberColumn(format="%.1f"),
+            },
+        )
+        st.caption(f"The {len(feed_df)} most recent transactions, newest first.")
+    else:
+        st.info("No transactions yet.")
 
     st.divider()
 live_view()
