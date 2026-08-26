@@ -268,9 +268,19 @@ def parse_args() -> argparse.Namespace:
         help=f"Kafka consumer group ID (default: {DEFAULT_GROUP_ID})",
     )
     parser.add_argument(
+        "--db",
+        default=DEFAULT_DB_PATH,
+        help=f"SQLite database for scored results (default: {DEFAULT_DB_PATH})",
+    )
+    parser.add_argument(
+        "--no-db",
+        action="store_true",
+        help="Disable SQLite persistence",
+    )
+    parser.add_argument(
         "--output",
         default=None,
-        help="Path to write scored results as JSON-lines (optional)",
+        help="Also write scored results as JSON-lines to this path (optional)",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -295,6 +305,7 @@ def main() -> None:
         model_path=args.model,
         explainer_path=args.explainer,
         group_id=args.group_id,
+        db_path=None if args.no_db else args.db,
         output_path=args.output,
     )
 
