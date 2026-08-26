@@ -120,6 +120,22 @@ def style_axes(fig: go.Figure, x_title: str, y_title: str) -> go.Figure:
     return fig
 
 
+def confidence_bins(threshold: float, n: int = 6) -> tuple[list[float], list[str]]:
+    """Equal-width bin edges spanning the only range alerts can occupy.
+
+    ``confidence`` is confidence in the *reported* label, so for a flagged
+    transaction it equals the fraud probability — which the decision threshold
+    bounds from below. Binning from 0.5 would leave most bars structurally
+    empty. Anchoring to the threshold (which changes only on retrain, so bar
+    positions stay put between refreshes) keeps every bin reachable.
+    """
+    lo = math.floor(max(0.5, min(threshold, 0.99)) * 100) / 100
+    step = (1.0 - lo) / n
+    edges = [lo + step * i for i in range(n + 1)]
+    labels = [f"{edges[i]:.3f}–{edges[i + 1]:.3f}" for i in range(n)]
+    return edges, labels
+
+
 def shap_summary(explanation: list) -> str:
     """Compact reason string for a table cell, e.g. ``V14 ↑ · V3 ↓ · V10 ↑``."""
     if not explanation:
