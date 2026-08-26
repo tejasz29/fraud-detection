@@ -90,6 +90,35 @@ class ResultStore:
         logger.info("SQLite store ready at %s (WAL)", self.db_path)
 
     # ------------------------------------------------------------------ writing
+    def insert(
+        self,
+        transaction_id: str,
+        amount: float,
+        is_fraud: int,
+        confidence: float,
+        fraud_probability: float,
+        shap_explanation: list | dict | None,
+        scoring_ms: float | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        """Buffer one scored transaction, flushing when the batch is due."""
+        self._pending.append((
+            str(transaction_id),
+            float(amount),
+            int(is_fraud),
+            float(confidence),
+            float(fraud_probability),
+            json.dumps(shap_explanation or []),
+            float(scoring_ms) if scoring_ms is not None else None,
+            timestamp or utc_now_iso(),
+        ))
+
+        due = (
+            len(self._pending) >= self.batch_size
+            or (time.monotonic() - self._last_flush) >= self.flush_interval
+        )
+        if due:
+            self.flush()
 
     def flush(self) -> int:
         """Commit buffered rows. Returns the number written."""
