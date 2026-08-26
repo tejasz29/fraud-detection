@@ -1,199 +1,149 @@
 """Real-time fraud detection dashboard built with Streamlit.
 
-Displays live scoring results from the Kafka consumer, including:
-    - Summary metrics (total scored, fraud count, fraud rate)
+Reads scored transactions from the SQLite database the consumer writes to, and
+shows:
+    - Summary stat tiles (total scored, fraud alerts, fraud rate, latency)
+    - Live transaction feed (every transaction, newest first)
+    - Flagged transactions table with SHAP reasons
+    - Confidence score bar chart
     - Fraud probability distribution
-    - Live fraud alerts with SHAP explanations
-    - Model performance metrics from training
+    - Model performance from training
 
 Usage:
     streamlit run dashboard/app.py
+
+Two decisions shape this file:
+
+*Bounded reads.* Every query is either a SQL aggregate or LIMIT-windowed.
+Loading the whole table would make each refresh slower the longer the stream
+runs, which is precisely what an always-on monitor must not do.
+
+*Fragment-scoped refresh.* The live section is an ``st.fragment`` on a timer, so
+only it redraws every few seconds. The obvious alternative — ``time.sleep()``
+then ``st.rerun()`` — holds a server thread open permanently, pins the app in a
+"Running" state, redraws static content needlessly, and resets scroll position
+on every tick.
 """
 from __future__ import annotations
 
 import json
+import math
+import sys
 from pathlib import Path
 
-import plotly.express as px
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-RESULTS_PATH = Path("results.jsonl")
-METRICS_PATH = Path("consumer/metrics.json")
+# Reuse the consumer's storage layer so the schema lives in exactly one place.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT / "consumer"))
+from storage import (  # noqa: E402
+    read_probabilities,
+    read_recent,
+    read_summary,
+)
+
+DB_PATH = _PROJECT_ROOT / "fraud_results.db"
+METRICS_PATH = _PROJECT_ROOT / "consumer" / "metrics.json"
+
+REFRESH_SECONDS = 3          # spec: auto-refresh every 3 seconds
+LATENCY_BUDGET_MS = 100      # spec: score each transaction in under 100 ms
+FEED_ROWS = 25               # live feed window
+ALERT_ROWS = 50              # flagged-transaction table window
+CHART_SAMPLE = 5000          # rows charted (bounded, newest-first)
+
+# Validated palette (dataviz skill; checked with scripts/validate_palette.js).
+# Single-series charts use SERIES_BLUE. Status colours are reserved and always
+# ship beside a text label, never as the only cue.
+SERIES_BLUE = "#2a78d6"
+SEQ_BLUE = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#0d366b"]
+INK_MUTED = "#898781"
+GRIDLINE = "#e1e0d9"
 
 st.set_page_config(
     page_title="Fraud Detection Dashboard",
-    page_icon=" ",
+    page_icon="🛡",
     layout="wide",
 )
 
 
 # ---------------------------------------------------------------------- data
-@st.cache_data(ttl=2)
-def load_results() -> list[dict]:
-    """Load scored transactions from the JSON-lines output file."""
-    if not RESULTS_PATH.exists():
-        return []
-    results = []
-    for line in RESULTS_PATH.read_text().splitlines():
-        if line.strip():
-            results.append(json.loads(line))
-    return results
+@st.cache_data(ttl=REFRESH_SECONDS)
+def get_summary() -> dict:
+    return read_summary(DB_PATH)
+
+
+@st.cache_data(ttl=REFRESH_SECONDS)
+def get_recent(limit: int, fraud_only: bool) -> list[dict]:
+    return read_recent(DB_PATH, limit=limit, fraud_only=fraud_only)
+
+
+@st.cache_data(ttl=REFRESH_SECONDS)
+def get_probabilities(limit: int) -> list[float]:
+    return read_probabilities(DB_PATH, limit=limit)
 
 
 @st.cache_data(ttl=60)
-def load_model_metrics() -> dict:
-    """Load training metrics from the saved JSON file."""
+def get_model_metrics() -> dict:
+    """Training metrics. Static between retrains, so cached far longer."""
     if not METRICS_PATH.exists():
         return {}
-    return json.loads(METRICS_PATH.read_text())
+    try:
+        return json.loads(METRICS_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
 
 
-# ------------------------------------------------------------------ header
-st.title("Fraud Detection Dashboard")
-st.caption("Real-time credit card fraud scoring pipeline  |  Kafka + XGBoost + SHAP")
-
-results = load_results()
-
-if not results:
-    st.info("No scored transactions yet. Start the consumer and producer to see live data.")
-    st.stop()
-
-# ------------------------------------------------------------- summary cards
-fraud_count = sum(1 for r in results if r["is_fraud"])
-legit_count = len(results) - fraud_count
-fraud_rate = (fraud_count / len(results) * 100) if results else 0
-avg_proba = sum(r["fraud_probability"] for r in results) / len(results)
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Scored", f"{len(results):,}")
-col2.metric("Fraud Alerts", f"{fraud_count:,}", delta=f"{fraud_rate:.2f}%")
-col3.metric("Legitimate", f"{legit_count:,}")
-col4.metric("Avg Fraud Probability", f"{avg_proba:.6f}")
-
-st.divider()
-
-# --------------------------------------------------- probability distribution
-st.subheader("Fraud Probability Distribution")
-
-probas = [r["fraud_probability"] for r in results]
-fig_hist = px.histogram(
-    x=probas,
-    nbins=80,
-    labels={"x": "Fraud Probability"},
-    color_discrete_sequence=["#636EFA"],
-)
-fig_hist.update_layout(
-    xaxis_title="Fraud Probability",
-    yaxis_title="Count",
-    height=350,
-    margin=dict(l=0, r=0, t=10, b=0),
-)
-st.plotly_chart(fig_hist, use_container_width=True)
-
-# --------------------------------------------------------- fraud vs legit pie
-col_left, col_right = st.columns([1, 1])
-
-with col_left:
-    fig_pie = px.pie(
-        names=["Legitimate", "Fraud"],
-        values=[legit_count, fraud_count],
-        color_discrete_sequence=["#636EFA", "#EF553B"],
-        hole=0.4,
-    )
-    fig_pie.update_layout(
-        height=300,
-        margin=dict(l=0, r=0, t=10, b=0),
-        showlegend=True,
-    )
-    st.plotly_chart(fig_pie, use_container_width=True)
-
-with col_right:
-    fraud_probs = [r["fraud_probability"] for r in results if r["is_fraud"]]
-    if fraud_probs:
-        fig_box = px.box(
-            y=fraud_probs,
-            labels={"y": "Fraud Probability"},
-            color_discrete_sequence=["#EF553B"],
-        )
-        fig_box.update_layout(
-            title="Fraud Alert Probabilities",
-            height=300,
-            margin=dict(l=0, r=0, t=30, b=0),
-            showlegend=False,
-        )
-        st.plotly_chart(fig_box, use_container_width=True)
-    else:
-        st.info("No fraud alerts yet.")
-
-st.divider()
-
-# -------------------------------------------------------- live fraud alerts
-st.subheader("Live Fraud Alerts")
-
-fraud_alerts = [r for r in results if r["is_fraud"]]
-
-if fraud_alerts:
-    for alert in reversed(fraud_alerts[-10:]):
-        proba = alert["fraud_probability"]
-        conf = alert["confidence"]
-        top = alert.get("top_features", [])
-
-        with st.expander(
-            f"  FRAUD  |  Probability: {proba:.4f}  |  Confidence: {conf:.4f}"
-        ):
-            if top:
-                st.markdown("**Top SHAP Features:**")
-                for feat in top:
-                    direction = "⬆ increases fraud" if feat["direction"] == "increases_fraud" else "⬇ decreases fraud"
-                    st.markdown(
-                        f"- **{feat['feature']}** = {feat['value']:.4f}  "
-                        f"(SHAP: {feat['shap_value']:.4f}) {direction}"
-                    )
-else:
-    st.info("No fraud alerts detected yet.")
-
-st.divider()
-
-# ---------------------------------------------------- model performance
-st.subheader("Model Performance (from training)")
-
-metrics = load_model_metrics()
-
-if metrics:
-    tuned = metrics.get("test_metrics_tuned_threshold", {})
-    cm = tuned.get("confusion_matrix", {})
-
-    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
-    mcol1.metric("Threshold", f"{metrics.get('chosen_threshold', 0):.4f}")
-    mcol2.metric("Precision", f"{tuned.get('precision', 0):.3f}")
-    mcol3.metric("Recall", f"{tuned.get('recall', 0):.3f}")
-    mcol4.metric("F1 Score", f"{tuned.get('f1', 0):.3f}")
-
-    acol1, acol2, acol3, acol4 = st.columns(4)
-    acol1.metric("ROC AUC", f"{tuned.get('roc_auc', 0):.3f}")
-    acol2.metric("PR AUC", f"{tuned.get('pr_auc', 0):.3f}")
-    acol3.metric("Latency (predict)", f"{metrics.get('latency_ms', {}).get('predict_only', 0):.2f} ms")
-    acol4.metric("Latency (+SHAP)", f"{metrics.get('latency_ms', {}).get('predict_plus_shap', 0):.2f} ms")
-
-    if cm:
-        st.markdown("**Confusion Matrix (tuned threshold):**")
-        cm_fig = px.imshow(
-            [[cm.get("true_negatives", 0), cm.get("false_positives", 0)],
-             [cm.get("false_negatives", 0), cm.get("true_positives", 0)]],
-            labels=dict(x="Predicted", y="Actual", color="Count"),
-            x=["Legitimate", "Fraud"],
-            y=["Legitimate", "Fraud"],
-            color_continuous_scale="Blues",
-            text_auto=True,
-        )
-        cm_fig.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(cm_fig, use_container_width=True)
-else:
-    st.info("No training metrics found. Run `python -m consumer.train` first.")
-
-# ----------------------------------------------------------- auto refresh
+# ------------------------------------------------------------------ sidebar
 st.sidebar.markdown("### Settings")
-auto_refresh = st.sidebar.checkbox("Auto-refresh (5s)", value=True)
-if auto_refresh:
-    st.rerun()
+st.sidebar.checkbox(
+    f"Auto-refresh ({REFRESH_SECONDS}s)", value=True, key="auto_refresh",
+)
+st.sidebar.checkbox(
+    "Feed: show legitimate too", value=True, key="show_all_feed",
+)
+st.sidebar.caption(f"Database\n\n`{DB_PATH.name}`")
+
+# ------------------------------------------------------------------- header
+st.title("Fraud Detection Dashboard")
+st.caption("Real-time credit card fraud scoring  ·  Kafka → XGBoost → SHAP")
+
+
+# ----------------------------------------------------------------- live view
+# Everything stream-derived lives in this fragment; the timer redraws only it.
+@st.fragment(run_every=REFRESH_SECONDS if st.session_state.auto_refresh else None)
+def live_view() -> None:
+    if not DB_PATH.exists():
+        st.info(
+            f"No database at `{DB_PATH.name}` yet. Start the consumer and producer:\n\n"
+            "```\npython -m consumer\npython -m producer.producer\n```"
+        )
+        return
+
+    summary = get_summary()
+    if summary["total"] == 0:
+        st.info("Database is empty — waiting for the producer to send transactions.")
+        return
+
+    metrics = get_model_metrics()
+
+    # ---------------------------------------------------------- summary tiles
+    # Deliberately stat tiles, not a pie: at a fraud rate this low a
+    # proportional slice is invisible, so the number communicates and the
+    # chart would not.
+    within_budget = summary["avg_scoring_ms"] < LATENCY_BUDGET_MS
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Total Scored", f"{summary['total']:,}")
+    c2.metric("Fraud Alerts", f"{summary['fraud']:,}")
+    c3.metric("Fraud Rate", f"{summary['fraud_rate']:.3f}%")
+    c4.metric("Flagged Amount", f"${summary['fraud_amount']:,.2f}")
+    c5.metric(
+        "Avg Scoring Latency",
+        f"{summary['avg_scoring_ms']:.1f} ms",
+        delta=f"within {LATENCY_BUDGET_MS} ms budget" if within_budget else "over budget",
+        delta_color="normal" if within_budget else "inverse",
+    )
+
+    st.divider()
+live_view()
