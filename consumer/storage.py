@@ -227,3 +227,24 @@ def read_recent(
             d["shap_explanation"] = []
         out.append(d)
     return out
+
+
+def read_probabilities(
+    db_path: str | Path = DEFAULT_DB_PATH, limit: int = 5000
+) -> list[float]:
+    """Fraud probabilities for the most recent ``limit`` rows (for the histogram).
+
+    Windowed deliberately: charting every row ever scored would make refreshes
+    slower the longer the demo runs.
+    """
+    conn = _connect_ro(db_path)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT fraud_probability FROM fraud_results ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [float(r["fraud_probability"]) for r in rows]
