@@ -1,0 +1,26 @@
+# Data & generated artifacts
+data/*.csv
+data/*.png
+data/*.parquet
+*.pkl
+*.joblib
+
+# Secrets / env
+.env
+.env.*
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
