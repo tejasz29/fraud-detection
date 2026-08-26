@@ -189,4 +189,50 @@ def live_view() -> None:
         st.info("No transactions yet.")
 
     st.divider()
+
+    # --------------------------------------------------- flagged transactions
+    st.subheader("Flagged Transactions")
+
+    alerts = get_recent(ALERT_ROWS, fraud_only=True)
+    if alerts:
+        alert_df = pd.DataFrame([{
+            "Transaction": r["transaction_id"],
+            "Amount": r["amount"],
+            "Fraud Prob.": r["fraud_probability"],
+            "Confidence": r["confidence"],
+            "Top SHAP Reasons": shap_summary(r["shap_explanation"]),
+            "Scored At (UTC)": r["timestamp"][:19].replace("T", " "),
+        } for r in alerts])
+
+        st.dataframe(
+            alert_df, width="stretch", hide_index=True,
+            column_config={
+                "Amount": st.column_config.NumberColumn(format="$%.2f"),
+                "Fraud Prob.": st.column_config.ProgressColumn(
+                    format="%.4f", min_value=0.0, max_value=1.0,
+                ),
+                "Confidence": st.column_config.NumberColumn(format="%.4f"),
+            },
+        )
+        st.caption(f"The {len(alert_df)} most recent alerts. SHAP names why each fired.")
+
+        with st.expander("Full SHAP detail for the latest alert"):
+            latest = alerts[0]
+            st.markdown(
+                f"**{latest['transaction_id']}**  ·  ${latest['amount']:,.2f}  ·  "
+                f"fraud probability {latest['fraud_probability']:.4f}"
+            )
+            for f in latest["shap_explanation"]:
+                arrow = (
+                    "↑ pushed toward fraud" if f["direction"] == "increases_fraud"
+                    else "↓ pushed toward legitimate"
+                )
+                st.markdown(
+                    f"- **{f['feature']}** = {f['value']:.4f} "
+                    f"(SHAP {f['shap_value']:+.4f}) — {arrow}"
+                )
+    else:
+        st.info("No fraud alerts yet.")
+
+    st.divider()
 live_view()
