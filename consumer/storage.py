@@ -199,3 +199,31 @@ def read_summary(db_path: str | Path = DEFAULT_DB_PATH) -> dict:
         "avg_scoring_ms": float(row["avg_scoring_ms"]),
         "fraud_amount": float(row["fraud_amount"]),
     }
+
+
+def read_recent(
+    db_path: str | Path = DEFAULT_DB_PATH,
+    limit: int = 200,
+    fraud_only: bool = False,
+) -> list[dict]:
+    """Return the most recent rows, newest first, with SHAP parsed back to a list."""
+    conn = _connect_ro(db_path)
+    if conn is None:
+        return []
+    where = "WHERE is_fraud = 1" if fraud_only else ""
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM fraud_results {where} ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["shap_explanation"] = json.loads(d["shap_explanation"])
+        except (TypeError, ValueError):
+            d["shap_explanation"] = []
+        out.append(d)
+    return out
