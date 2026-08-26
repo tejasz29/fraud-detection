@@ -92,9 +92,15 @@ class TransactionProducer:
 
         return df
 
-    def _row_to_transaction(self, row: pd.Series) -> dict:
-        """Convert a DataFrame row to a consumer-ready transaction dict."""
-        return {col: float(row[col]) for col in FEATURE_COLUMNS}
+    def _row_to_transaction(self, row: pd.Series, index: int) -> dict:
+        """Convert a DataFrame row to a consumer-ready transaction dict.
+
+        ``transaction_id`` is added so a scored result can be traced back to the
+        source row; the model ignores keys outside FEATURE_COLUMNS.
+        """
+        transaction = {col: float(row[col]) for col in FEATURE_COLUMNS}
+        transaction["transaction_id"] = f"txn-{index:06d}"
+        return transaction
 
     def run(self) -> dict:
         """Stream all transactions to Kafka and return a summary dict."""
@@ -110,7 +116,7 @@ class TransactionProducer:
                 if not self._running:
                     break
 
-                transaction = self._row_to_transaction(row)
+                transaction = self._row_to_transaction(row, idx)
 
                 try:
                     self._producer.send(self.topic, value=transaction)
