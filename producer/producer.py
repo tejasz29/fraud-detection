@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pandas as pd
 from kafka import KafkaProducer
-from kafka.errors import NoBrokersAvailable
+from kafka.errors import KafkaTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class TransactionProducer:
                 )
                 logger.info("Connected to Kafka at %s", self.bootstrap_servers)
                 return producer
-            except NoBrokersAvailable:
+            except (KafkaTimeoutError, OSError):
                 logger.warning("Kafka not available at %s — retrying in 3s", self.bootstrap_servers)
                 time.sleep(3)
 
