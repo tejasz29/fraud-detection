@@ -21,6 +21,11 @@ __pycache__/
 venv/
 env/
 
+# Kafka (local install)
+kafka_*/
+kafka-logs/
+results.jsonl
+
 # OS / editor
 .DS_Store
 Thumbs.db
