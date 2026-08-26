@@ -313,4 +313,26 @@ def live_view() -> None:
             st.caption("How decisive each alert was.")
             st.info("No fraud alerts to chart yet.")
 
+    with chart_right:
+        st.subheader("Fraud Probability Distribution")
+        st.caption(
+            f"Newest {CHART_SAMPLE:,} transactions. Log scale — legitimate "
+            "traffic dominates by three orders of magnitude."
+        )
+
+        probas = get_probabilities(CHART_SAMPLE)
+        if probas:
+            fig_hist = go.Figure(go.Histogram(
+                x=probas, nbinsx=50,
+                marker=dict(color=SERIES_BLUE, line=dict(width=0)),
+                hovertemplate="Probability %{x}<br>%{y} transactions<extra></extra>",
+            ))
+            style_axes(fig_hist, "Fraud probability", "Transactions (log)")
+            # On a linear axis the near-zero bar flattens everything else to nothing.
+            fig_hist.update_yaxes(type="log")
+            st.plotly_chart(fig_hist, width="stretch")
+        else:
+            st.info("No data to chart yet.")
+
+
 live_view()
