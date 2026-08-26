@@ -368,5 +368,31 @@ if metrics:
         "inflated by the large true-negative mass."
     )
 
+    if cm:
+        st.markdown("**Confusion matrix** — test set, tuned threshold")
+        z = [
+            [cm.get("true_negatives", 0), cm.get("false_positives", 0)],
+            [cm.get("false_negatives", 0), cm.get("true_positives", 0)],
+        ]
+        fig_cm = go.Figure(go.Heatmap(
+            z=z,
+            x=["Predicted legitimate", "Predicted fraud"],
+            y=["Actually legitimate", "Actually fraud"],
+            # Sequential = one hue, light to dark.
+            colorscale=[[0, SEQ_BLUE[0]], [0.5, SEQ_BLUE[3]], [1, SEQ_BLUE[5]]],
+            text=[[f"{v:,}" for v in row] for row in z],
+            texttemplate="%{text}",
+            textfont=dict(size=14),
+            showscale=False,
+            hovertemplate="%{y}<br>%{x}<br>%{z:,} transactions<extra></extra>",
+        ))
+        fig_cm.update_layout(
+            height=280, margin=dict(l=0, r=0, t=10, b=0),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(family='system-ui, -apple-system, "Segoe UI", sans-serif'),
+        )
+        fig_cm.update_xaxes(tickfont=dict(color=INK_MUTED, size=11))
+        fig_cm.update_yaxes(tickfont=dict(color=INK_MUTED, size=11))
+        st.plotly_chart(fig_cm, width="stretch")
 else:
     st.info("No training metrics found. Run `python consumer/train.py` first.")
