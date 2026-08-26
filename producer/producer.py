@@ -38,6 +38,9 @@ FEATURE_COLUMNS: list[str] = ["Time"] + [f"V{i}" for i in range(1, 29)] + ["Amou
 DEFAULT_TOPIC = "transactions"
 DEFAULT_BOOTSTRAP_SERVERS = "localhost:9092"
 DEFAULT_DATA_PATH = "data/creditcard.csv"
+# The spec calls for a 1 transaction/second stream. Pass --delay 0 to replay the
+# dataset at full speed instead (useful for load-testing the consumer).
+DEFAULT_DELAY = 1.0
 
 
 @dataclass
@@ -47,7 +50,7 @@ class TransactionProducer:
     topic: str = DEFAULT_TOPIC
     bootstrap_servers: str = DEFAULT_BOOTSTRAP_SERVERS
     data_path: str = DEFAULT_DATA_PATH
-    delay: float = 0.0
+    delay: float = DEFAULT_DELAY
     shuffle: bool = False
     _producer: KafkaProducer | None = field(default=None, repr=False)
     _sent: int = field(default=0, repr=False)
@@ -180,8 +183,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--delay",
         type=float,
-        default=0.0,
-        help="Seconds to wait between messages (default: 0 = as fast as possible)",
+        default=DEFAULT_DELAY,
+        help=f"Seconds to wait between messages (default: {DEFAULT_DELAY} = 1 txn/s; "
+             "use 0 for full speed)",
     )
     parser.add_argument(
         "--shuffle",
