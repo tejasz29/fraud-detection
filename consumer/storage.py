@@ -51,3 +51,8 @@ INSERT INTO fraud_results
      shap_explanation, scoring_ms, timestamp)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 """
+
+
+def utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string (sorts lexicographically)."""
+    return datetime.now(timezone.utc).isoformat()
