@@ -4,6 +4,8 @@ data/*.png
 data/*.parquet
 *.pkl
 *.joblib
+*.db
+consumer/metrics.json
 
 # Secrets / env
 .env
