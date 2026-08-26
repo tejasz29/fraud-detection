@@ -168,3 +168,34 @@ def _connect_ro(db_path: str | Path) -> sqlite3.Connection | None:
     conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=5.0)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def read_summary(db_path: str | Path = DEFAULT_DB_PATH) -> dict:
+    """Aggregate counts computed in SQL, so cost does not grow with table size."""
+    conn = _connect_ro(db_path)
+    if conn is None:
+        return {"total": 0, "fraud": 0, "legit": 0, "fraud_rate": 0.0,
+                "avg_probability": 0.0, "avg_scoring_ms": 0.0, "total_amount": 0.0}
+    try:
+        row = conn.execute("""
+            SELECT COUNT(*)                         AS total,
+                   COALESCE(SUM(is_fraud), 0)       AS fraud,
+                   COALESCE(AVG(fraud_probability), 0) AS avg_probability,
+                   COALESCE(AVG(scoring_ms), 0)     AS avg_scoring_ms,
+                   COALESCE(SUM(CASE WHEN is_fraud = 1 THEN amount ELSE 0 END), 0)
+                                                    AS fraud_amount
+            FROM fraud_results
+        """).fetchone()
+    finally:
+        conn.close()
+
+    total, fraud = int(row["total"]), int(row["fraud"])
+    return {
+        "total": total,
+        "fraud": fraud,
+        "legit": total - fraud,
+        "fraud_rate": (fraud / total * 100) if total else 0.0,
+        "avg_probability": float(row["avg_probability"]),
+        "avg_scoring_ms": float(row["avg_scoring_ms"]),
+        "fraud_amount": float(row["fraud_amount"]),
+    }
