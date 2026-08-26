@@ -5,6 +5,8 @@ data/*.parquet
 *.pkl
 *.joblib
 *.db
+*.db-wal
+*.db-shm
 consumer/metrics.json
 
 # Secrets / env
