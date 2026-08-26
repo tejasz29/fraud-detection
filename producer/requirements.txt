@@ -1,0 +1,3 @@
+# Producer service: streams transactions to Kafka
+pandas>=2.1.4
+kafka-python>=2.0.2
