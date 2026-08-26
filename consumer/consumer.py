@@ -96,8 +96,19 @@ class FraudConsumer:
                 time.sleep(3)
 
     def _score_transaction(self, transaction: dict) -> dict:
-        """Score one transaction and return the enriched result."""
+        """Score one transaction and return the enriched result.
+
+        Records the model's own latency (``scoring_ms``) so the dashboard can
+        show live evidence against the project's 100 ms budget.
+        """
+        started = time.perf_counter()
         result = self._model.score_one(transaction)
+        result["scoring_ms"] = (time.perf_counter() - started) * 1000.0
+        # Producer supplies transaction_id; fall back so a hand-crafted or
+        # replayed message without one still persists cleanly.
+        result["transaction_id"] = str(transaction.get("transaction_id", "unknown"))
+        result["amount"] = float(transaction.get("Amount", 0.0))
+        result["timestamp"] = utc_now_iso()
         result["transaction"] = transaction
         return result
 
@@ -112,7 +123,9 @@ class FraudConsumer:
         ) if top else "n/a"
 
         logger.warning(
-            "FRAUD ALERT | prob=%.4f conf=%.4f | top features: %s",
+            "FRAUD ALERT | %s | amount=%.2f | prob=%.4f conf=%.4f | top features: %s",
+            result["transaction_id"],
+            result["amount"],
             proba,
             confidence,
             top_str,
