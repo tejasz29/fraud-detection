@@ -22,7 +22,9 @@ from pathlib import Path
 from kafka import KafkaConsumer
 from kafka.errors import KafkaTimeoutError
 
-from model import FraudModel
+# Allow `python -m consumer` to import the sibling model module.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from model import FraudModel  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
