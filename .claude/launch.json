@@ -1,0 +1,21 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "streamlit",
+      "runtimeArgs": [
+        "run",
+        "dashboard/app.py",
+        "--server.port",
+        "8502",
+        "--server.headless",
+        "true",
+        "--browser.gatherUsageStats",
+        "false"
+      ],
+      "port": 8502,
+      "autoPort": false
+    }
+  ]
+}
