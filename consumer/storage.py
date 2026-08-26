@@ -44,3 +44,10 @@ CREATE TABLE IF NOT EXISTS fraud_results (
 CREATE INDEX IF NOT EXISTS idx_fraud_results_is_fraud ON fraud_results(is_fraud);
 CREATE INDEX IF NOT EXISTS idx_fraud_results_ts       ON fraud_results(timestamp);
 """
+
+_INSERT = """
+INSERT INTO fraud_results
+    (transaction_id, amount, is_fraud, confidence, fraud_probability,
+     shap_explanation, scoring_ms, timestamp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"""
