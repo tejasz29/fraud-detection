@@ -56,3 +56,35 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 def utc_now_iso() -> str:
     """Current UTC time as an ISO-8601 string (sorts lexicographically)."""
     return datetime.now(timezone.utc).isoformat()
+
+
+class ResultStore:
+    """Batched SQLite writer for scored transactions.
+
+    Usable as a context manager so a crash or Ctrl-C still flushes buffered rows:
+
+        with ResultStore("fraud_results.db") as store:
+            store.insert(...)
+    """
+
+    def __init__(
+        self,
+        db_path: str | Path = DEFAULT_DB_PATH,
+        batch_size: int = 50,
+        flush_interval: float = 1.0,
+    ) -> None:
+        self.db_path = str(db_path)
+        self.batch_size = max(1, batch_size)
+        self.flush_interval = flush_interval
+        self._pending: list[tuple] = []
+        self._last_flush = time.monotonic()
+        self._written = 0
+
+        self._conn = sqlite3.connect(self.db_path, timeout=30.0)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        # NORMAL trades an fsync per commit for speed. A power-loss could lose the
+        # last transactions, which is an acceptable trade for a monitoring stream.
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.executescript(SCHEMA)
+        self._conn.commit()
+        logger.info("SQLite store ready at %s (WAL)", self.db_path)
