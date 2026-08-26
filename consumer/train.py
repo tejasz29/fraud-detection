@@ -172,6 +172,20 @@ def tune_threshold(
 
     plateau = thresholds[f1 >= best_f1 * 0.99]
     threshold = float(np.median(plateau))
+
+    # Max-margin placement. `thresholds` only contains *observed* scores, so the
+    # value above sits exactly ON a training-set score with zero margin — the
+    # nearest unseen transaction scoring a hair lower flips its label. Recentre
+    # the cut midway into the score gap beneath it. On dense real-world scores
+    # the neighbour is adjacent and this barely moves; on well-separated scores
+    # it moves the cut off the cliff edge and into the middle of the gap.
+    below = y_proba[y_proba < threshold]
+    if below.size:
+        centred = (threshold + float(below.max())) / 2.0
+        if centred != threshold:
+            logger.info("Max-margin recentre: %.4f -> %.4f", threshold, centred)
+            threshold = centred
+
     logger.info(
         "Tuned threshold=%.4f (val F1 %.4f -> %.4f; plateau of %d thresholds in [%.4f, %.4f])",
         threshold, default_f1, best_f1, len(plateau), float(plateau.min()), float(plateau.max()),
