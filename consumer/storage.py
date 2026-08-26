@@ -136,3 +136,20 @@ class ResultStore:
     def written(self) -> int:
         """Total rows committed by this store instance."""
         return self._written
+
+    def close(self) -> None:
+        """Flush and close. Safe to call more than once."""
+        if self._conn is None:
+            return
+        try:
+            self.flush()
+        finally:
+            self._conn.close()
+            self._conn = None
+            logger.info("SQLite store closed (%d rows written)", self._written)
+
+    def __enter__(self) -> "ResultStore":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
