@@ -26,3 +26,21 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "fraud_results.db"
+
+# `id` gives a stable insertion order for the live feed: `timestamp` alone can
+# tie when many transactions are scored within the same millisecond.
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS fraud_results (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id    TEXT    NOT NULL,
+    amount            REAL    NOT NULL,
+    is_fraud          INTEGER NOT NULL,
+    confidence        REAL    NOT NULL,
+    fraud_probability REAL    NOT NULL,
+    shap_explanation  TEXT    NOT NULL,
+    scoring_ms        REAL,
+    timestamp         TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fraud_results_is_fraud ON fraud_results(is_fraud);
+CREATE INDEX IF NOT EXISTS idx_fraud_results_ts       ON fraud_results(timestamp);
+"""
