@@ -88,3 +88,22 @@ class ResultStore:
         self._conn.executescript(SCHEMA)
         self._conn.commit()
         logger.info("SQLite store ready at %s (WAL)", self.db_path)
+
+    # ------------------------------------------------------------------ writing
+
+    def flush(self) -> int:
+        """Commit buffered rows. Returns the number written."""
+        if not self._pending:
+            return 0
+        n = len(self._pending)
+        self._conn.executemany(_INSERT, self._pending)
+        self._conn.commit()
+        self._pending.clear()
+        self._last_flush = time.monotonic()
+        self._written += n
+        return n
+
+    @property
+    def written(self) -> int:
+        """Total rows committed by this store instance."""
+        return self._written
