@@ -131,15 +131,34 @@ class FraudConsumer:
             top_str,
         )
 
+    def _persist(self, result: dict) -> None:
+        """Write the scored result to SQLite and, if configured, the JSONL file."""
+        if self._store is not None:
+            self._store.insert(
+                transaction_id=result["transaction_id"],
+                amount=result["amount"],
+                is_fraud=result["is_fraud"],
+                confidence=result["confidence"],
+                fraud_probability=result["fraud_probability"],
+                shap_explanation=result.get("top_features", []),
+                scoring_ms=result.get("scoring_ms"),
+                timestamp=result["timestamp"],
+            )
+        self._write_result(result)
+
     def _write_result(self, result: dict) -> None:
-        """Append a scored result to the output file if configured."""
+        """Append a scored result to the optional JSON-lines output file."""
         if self._output_file is None:
             return
         record = {
+            "transaction_id": result["transaction_id"],
+            "amount": result["amount"],
             "fraud_probability": result["fraud_probability"],
             "is_fraud": result["is_fraud"],
             "confidence": result["confidence"],
+            "scoring_ms": result.get("scoring_ms"),
             "top_features": result.get("top_features", []),
+            "timestamp": result["timestamp"],
         }
         self._output_file.write(json.dumps(record) + "\n")
         self._output_file.flush()
@@ -148,6 +167,9 @@ class FraudConsumer:
         """Main loop: consume, score, log, and persist. Returns summary stats."""
         self._model = self._load_model()
         self._consumer = self._connect()
+
+        if self.db_path:
+            self._store = ResultStore(self.db_path)
 
         if self.output_path:
             self._output_file = open(self.output_path, "a")
@@ -171,7 +193,7 @@ class FraudConsumer:
 
                         try:
                             result = self._score_transaction(transaction)
-                            self._write_result(result)
+                            self._persist(result)
 
                             if result["is_fraud"]:
                                 self._stats["fraud"] += 1
@@ -196,6 +218,10 @@ class FraudConsumer:
 
         finally:
             elapsed = time.time() - start_time
+            # Flush buffered rows before closing so a Ctrl-C never loses the
+            # last partial batch.
+            if self._store:
+                self._store.close()
             if self._output_file:
                 self._output_file.close()
             self._consumer.close()
