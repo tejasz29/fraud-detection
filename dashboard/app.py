@@ -336,3 +336,37 @@ def live_view() -> None:
 
 
 live_view()
+
+st.divider()
+
+# ------------------------------------------------------- model performance
+# Static between retrains, so it sits outside the fragment and never redraws
+# on the refresh timer.
+st.subheader("Model Performance (from training)")
+
+metrics = get_model_metrics()
+
+if metrics:
+    tuned = metrics.get("test_metrics_tuned_threshold", {})
+    cm = tuned.get("confusion_matrix", {})
+    lat = metrics.get("latency_ms", {})
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Threshold", f"{metrics.get('chosen_threshold', 0):.4f}")
+    m2.metric("Precision", f"{tuned.get('precision', 0):.3f}")
+    m3.metric("Recall", f"{tuned.get('recall', 0):.3f}")
+    m4.metric("F1 Score", f"{tuned.get('f1', 0):.3f}")
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("ROC AUC", f"{tuned.get('roc_auc', 0):.3f}")
+    a2.metric("PR AUC", f"{tuned.get('pr_auc', 0):.3f}")
+    a3.metric("Latency (predict)", f"{lat.get('predict_only', 0):.2f} ms")
+    a4.metric("Latency (+SHAP)", f"{lat.get('predict_plus_shap', 0):.2f} ms")
+
+    st.caption(
+        "PR AUC is the honest headline at 0.17% fraud prevalence — ROC AUC is "
+        "inflated by the large true-negative mass."
+    )
+
+else:
+    st.info("No training metrics found. Run `python consumer/train.py` first.")
