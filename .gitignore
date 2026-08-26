@@ -5,8 +5,8 @@ data/*.parquet
 *.pkl
 *.joblib
 *.db
-*.db-wal
 *.db-shm
+*.db-wal
 consumer/metrics.json
 
 # Secrets / env
@@ -33,4 +33,3 @@ results.jsonl
 Thumbs.db
 .vscode/
 .idea/
-.claude/settings.local.json
