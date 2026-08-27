@@ -4,10 +4,35 @@ A real-time credit-card fraud detection system. Transactions stream through
 Kafka, get scored by a trained XGBoost model (with SHAP explanations), are
 persisted to SQLite, and are visualized live in a Streamlit dashboard.
 
+## About this project
+
+This is a **learning project**, not a production fraud system. It was built to
+string together the full stack of a real-time ML service end to end and to
+understand the hard parts that tutorials skip:
+
+- **Streaming architecture** — producer/consumer over Kafka, and why a
+  transport abstraction matters.
+- **Imbalanced classification** — with fraud at ~0.17% of transactions, naive
+  accuracy is meaningless; the project leans on SMOTE, threshold tuning, and
+  precision/recall/PR-AUC instead of accuracy.
+- **Serving latency** — keeping single-transaction scoring (predict + SHAP)
+  under a 100 ms budget, which drove the numpy/`inplace_predict` path over a
+  pandas one.
+- **Explainability** — every prediction ships with SHAP reasons so a "fraud"
+  call is auditable, not a black box.
+- **Operational reality** — config via `.env`, pluggable transports, log capture,
+  and a one-command launcher, because a demo that only runs after five manual
+  terminal commands isn't a demo anyone re-runs.
+
+Treat the numbers as illustrative. The model is trained on the public ULB
+dataset, the broker runs locally, and there is no live card data, no retraining
+loop, and no monitoring — the gaps a real deployment would need are listed under
+[Known gaps](#known-gaps).
+
 ## What it does
 
-1. **Producer** generates synthetic transactions (1/sec) and publishes them to a
-   Kafka topic (`transactions`).
+1. **Producer** streams transactions from `data/creditcard.csv` (1/sec by
+   default) and publishes them to a Kafka topic (`transactions`).
 2. **Consumer** consumes each transaction, scores it with XGBoost + SHAP, raises
    an alert on fraud, and writes every result (probability, label, SHAP reasons,
    latency) to `fraud_results.db` (SQLite).
