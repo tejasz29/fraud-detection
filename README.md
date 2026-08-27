@@ -103,13 +103,38 @@ latency check. Metrics are written to `consumer/metrics.json`.
 
 ## Configuration
 
-| Setting            | Default             | Where |
-|--------------------|---------------------|-------|
-| Kafka bootstrap    | `localhost:9092`    | `producer.py` / `consumer.py` |
-| Topic              | `transactions`      | `consumer.py` |
-| Model / explainer  | `consumer/model.pkl`| `consumer.py` |
-| Result DB          | `fraud_results.db`  | `consumer/storage.py` |
-| Broker config      | `config/kafka-server.properties` | `run.ps1` |
+All tunables live in `config.py` and are read from the environment (or a `.env`
+file via `python-dotenv`). Copy `.env.example` to `.env` to override:
+
+```powershell
+copy .env.example .env
+```
+
+| Setting                  | Default             | Env var |
+|--------------------------|---------------------|---------|
+| Transport backend        | `kafka`             | `TRANSPORT` |
+| Kafka bootstrap          | `localhost:9092`    | `KAFKA_BOOTSTRAP_SERVERS` |
+| Topic                    | `transactions`      | `KAFKA_TOPIC` |
+| Model / explainer        | `consumer/model.pkl`| `MODEL_PATH` / `EXPLAINER_PATH` |
+| Result DB                | `fraud_results.db`  | `DB_PATH` |
+| Dashboard port           | `8501`              | `DASHBOARD_PORT` |
+| Broker config            | `config/kafka-server.properties` | `run.ps1` |
+
+CLI flags (`--transport`, `--model`, `--db`, …) still override the env for a
+single run.
+
+## Pluggable transport
+
+Producer and consumer depend only on the `Transport` interface in `transport/`,
+never on Kafka directly:
+
+- `transport/kafka_transport.py` — `KafkaTransport` (default).
+- `transport/memory_transport.py` — `MemoryTransport`, an in-process queue for
+  tests and single-process demos (needs no broker).
+
+Switch backends by setting `TRANSPORT=memory` (or `--transport memory`); no code
+changes in the services. A cross-process local transport (e.g. file/SQLite-backed)
+can be added later by implementing `Transport`.
 
 ## Project layout
 
