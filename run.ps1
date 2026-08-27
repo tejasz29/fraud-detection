@@ -13,12 +13,22 @@ Set-Location $Root
 $KafkaHome = "kafka_2.13-3.9.2"
 $ServerStart = Join-Path $KafkaHome "bin/windows/kafka-server-start.bat"
 $ServerProps = "config/kafka-server.properties"
+$LogDir = Join-Path $Root "logs"
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-function Start-Background($Name, $Command) {
-    Write-Host ">> starting $Name" -ForegroundColor Cyan
-    return Start-Process -FilePath "powershell" `
-        -ArgumentList "-NoProfile", "-Command", $Command `
-        -PassThru -WindowStyle Hidden
+function Start-Background($Name, $Command, $Log) {
+    Write-Host ">> starting $Name (log: $Log)" -ForegroundColor Cyan
+    $params = @{
+        FilePath = "powershell"
+        ArgumentList = "-NoProfile", "-Command", $Command
+        PassThru = $true
+        WindowStyle = "Hidden"
+    }
+    if ($Log) {
+        $params.RedirectStandardOutput = $Log
+        $params.RedirectStandardError = $Log
+    }
+    return Start-Process @params
 }
 
 # 1. Local Kafka broker (no format step — kafka-logs/ already has a valid cluster.id)
@@ -27,7 +37,7 @@ if (-not (Test-Path $ServerStart)) {
     Write-Error "Kafka not found at $ServerStart"
     exit 1
 }
-$kafkaJob = Start-Background "kafka" "$ServerStart $ServerProps; Read-Host 'kafka exited'"
+$kafkaJob = Start-Background "kafka" "$ServerStart $ServerProps" (Join-Path $LogDir "kafka.log")
 
 # Give the broker a moment to become ready.
 $ready = $false
@@ -44,9 +54,9 @@ if (-not $ready) {
 
 # 2-4. Python processes
 $jobs = @()
-$jobs += Start-Background "producer" "python -m producer --data data/creditcard.csv; Read-Host 'producer exited'"
-$jobs += Start-Background "consumer" "python -m consumer; Read-Host 'consumer exited'"
-$jobs += Start-Background "dashboard" "streamlit run dashboard/app.py; Read-Host 'dashboard exited'"
+$jobs += Start-Background "producer" "python -m producer --data data/creditcard.csv" (Join-Path $LogDir "producer.log")
+$jobs += Start-Background "consumer" "python -m consumer" (Join-Path $LogDir "consumer.log")
+$jobs += Start-Background "dashboard" "streamlit run dashboard/app.py" (Join-Path $LogDir "dashboard.log")
 
 Write-Host "`nStack is up. Dashboard: http://localhost:8501" -ForegroundColor Green
 Write-Host "Press Ctrl-C to stop everything.`n" -ForegroundColor Yellow
