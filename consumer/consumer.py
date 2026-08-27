@@ -20,35 +20,28 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from kafka import KafkaConsumer
-from kafka.errors import KafkaTimeoutError
-
 # Allow `python -m consumer` to import the sibling model module.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config import load_settings  # noqa: E402
 from model import FraudModel  # noqa: E402
-from storage import DEFAULT_DB_PATH, ResultStore, utc_now_iso  # noqa: E402
+from storage import ResultStore, utc_now_iso  # noqa: E402
+from transport import Transport, get_transport  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOPIC = "transactions"
-DEFAULT_BOOTSTRAP_SERVERS = "localhost:9092"
 DEFAULT_MODEL_PATH = "consumer/model.pkl"
 DEFAULT_EXPLAINER_PATH = "consumer/explainer.pkl"
-DEFAULT_GROUP_ID = "fraud-detection-group"
 
 
 @dataclass
 class FraudConsumer:
     """Consumes transactions from Kafka, scores them, and logs alerts."""
 
-    topic: str = DEFAULT_TOPIC
-    bootstrap_servers: str = DEFAULT_BOOTSTRAP_SERVERS
+    transport: Transport
     model_path: str = DEFAULT_MODEL_PATH
     explainer_path: str = DEFAULT_EXPLAINER_PATH
-    group_id: str = DEFAULT_GROUP_ID
-    db_path: str | None = DEFAULT_DB_PATH
+    db_path: str | None = None
     output_path: str | None = None
-    _consumer: KafkaConsumer | None = field(default=None, repr=False)
     _model: FraudModel | None = field(default=None, repr=False)
     _store: ResultStore | None = field(default=None, repr=False)
     _output_file: object | None = field(default=None, repr=False)
@@ -75,25 +68,6 @@ class FraudConsumer:
         model = FraudModel.load(model_path, explainer_path)
         logger.info("Loaded model from %s (threshold=%.4f)", model_path, model.threshold)
         return model
-
-    def _connect(self) -> KafkaConsumer:
-        """Create and return a KafkaConsumer, retrying on connection failure."""
-        while True:
-            try:
-                consumer = KafkaConsumer(
-                    self.topic,
-                    bootstrap_servers=self.bootstrap_servers,
-                    group_id=self.group_id,
-                    auto_offset_reset="earliest",
-                    value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-                    enable_auto_commit=True,
-                    consumer_timeout_ms=1000,
-                )
-                logger.info("Connected to Kafka at %s (topic=%s)", self.bootstrap_servers, self.topic)
-                return consumer
-            except (KafkaTimeoutError, OSError):
-                logger.warning("Kafka not available — retrying in 3s")
-                time.sleep(3)
 
     def _score_transaction(self, transaction: dict) -> dict:
         """Score one transaction and return the enriched result.
@@ -166,7 +140,7 @@ class FraudConsumer:
     def run(self) -> dict:
         """Main loop: consume, score, log, and persist. Returns summary stats."""
         self._model = self._load_model()
-        self._consumer = self._connect()
+        self.transport.connect()
 
         if self.db_path:
             self._store = ResultStore(self.db_path)
@@ -180,41 +154,33 @@ class FraudConsumer:
         try:
             logger.info("Listening for transactions... (Ctrl-C to stop)")
 
-            while self._running:
-                batch = self._consumer.poll(timeout_ms=500)
+            for transaction in self.transport.receive(should_stop=lambda: not self._running):
+                self._stats["total"] += 1
 
-                for _topic_partition, messages in batch.items():
-                    for message in messages:
-                        if not self._running:
-                            break
+                try:
+                    result = self._score_transaction(transaction)
+                    self._persist(result)
 
-                        self._stats["total"] += 1
-                        transaction = message.value
+                    if result["is_fraud"]:
+                        self._stats["fraud"] += 1
+                        self._log_alert(result)
+                    else:
+                        self._stats["legit"] += 1
 
-                        try:
-                            result = self._score_transaction(transaction)
-                            self._persist(result)
+                    if self._stats["total"] % 500 == 0:
+                        elapsed = time.time() - start_time
+                        rate = self._stats["total"] / elapsed if elapsed > 0 else 0
+                        logger.info(
+                            "Processed %d (%.1f txn/s) | fraud=%d legit=%d",
+                            self._stats["total"],
+                            rate,
+                            self._stats["fraud"],
+                            self._stats["legit"],
+                        )
 
-                            if result["is_fraud"]:
-                                self._stats["fraud"] += 1
-                                self._log_alert(result)
-                            else:
-                                self._stats["legit"] += 1
-
-                            if self._stats["total"] % 500 == 0:
-                                elapsed = time.time() - start_time
-                                rate = self._stats["total"] / elapsed if elapsed > 0 else 0
-                                logger.info(
-                                    "Processed %d (%.1f txn/s) | fraud=%d legit=%d",
-                                    self._stats["total"],
-                                    rate,
-                                    self._stats["fraud"],
-                                    self._stats["legit"],
-                                )
-
-                        except Exception as e:
-                            self._stats["errors"] += 1
-                            logger.error("Failed to score transaction: %s", e)
+                except Exception as e:
+                    self._stats["errors"] += 1
+                    logger.error("Failed to score transaction: %s", e)
 
         finally:
             elapsed = time.time() - start_time
@@ -224,7 +190,7 @@ class FraudConsumer:
                 self._store.close()
             if self._output_file:
                 self._output_file.close()
-            self._consumer.close()
+            self.transport.close()
 
             logger.info(
                 "Consumer finished — total=%d fraud=%d legit=%d errors=%d elapsed=%.1fs",
@@ -238,39 +204,29 @@ class FraudConsumer:
         return {**self._stats, "elapsed_seconds": round(elapsed, 2)}
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(settings) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Consume and score credit-card transactions in real time",
     )
     parser.add_argument(
-        "--topic",
-        default=DEFAULT_TOPIC,
-        help=f"Kafka topic to consume from (default: {DEFAULT_TOPIC})",
-    )
-    parser.add_argument(
-        "--bootstrap-servers",
-        default=DEFAULT_BOOTSTRAP_SERVERS,
-        help=f"Kafka broker address (default: {DEFAULT_BOOTSTRAP_SERVERS})",
-    )
-    parser.add_argument(
         "--model",
-        default=DEFAULT_MODEL_PATH,
-        help=f"Path to model.pkl (default: {DEFAULT_MODEL_PATH})",
+        default=settings.model_path,
+        help=f"Path to model.pkl (default: {settings.model_path})",
     )
     parser.add_argument(
         "--explainer",
-        default=DEFAULT_EXPLAINER_PATH,
-        help=f"Path to explainer.pkl (default: {DEFAULT_EXPLAINER_PATH})",
+        default=settings.explainer_path,
+        help=f"Path to explainer.pkl (default: {settings.explainer_path})",
     )
     parser.add_argument(
-        "--group-id",
-        default=DEFAULT_GROUP_ID,
-        help=f"Kafka consumer group ID (default: {DEFAULT_GROUP_ID})",
+        "--transport",
+        default=settings.transport,
+        help=f"Transport backend (default: {settings.transport})",
     )
     parser.add_argument(
         "--db",
-        default=DEFAULT_DB_PATH,
-        help=f"SQLite database for scored results (default: {DEFAULT_DB_PATH})",
+        default=settings.db_path,
+        help=f"SQLite database for scored results (default: {settings.db_path})",
     )
     parser.add_argument(
         "--no-db",
@@ -291,7 +247,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    args = parse_args()
+    settings = load_settings()
+    args = parse_args(settings)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -299,12 +256,17 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
+    # Allow --transport to override the .env setting for this run.
+    effective = settings
+    if args.transport != settings.transport:
+        from dataclasses import replace
+
+        effective = replace(settings, transport=args.transport)
+
     consumer = FraudConsumer(
-        topic=args.topic,
-        bootstrap_servers=args.bootstrap_servers,
+        transport=get_transport(effective),
         model_path=args.model,
         explainer_path=args.explainer,
-        group_id=args.group_id,
         db_path=None if args.no_db else args.db,
         output_path=args.output,
     )
